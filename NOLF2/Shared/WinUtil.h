@@ -36,9 +36,10 @@ public:
 	static void WriteToDebugFile (char const* strText);
 };
 
-void getLevelName(const std::string&,char*);
-
 #ifdef __LINUX
+void getLevelName(const std::string&,char*);
+#include <dlfcn.h>
+#include <linux/stddef.h>
 // copied definition from unistd.h
 extern "C" int rmdir (const char *__path) __THROW __nonnull ((1));
 extern "C" char* getcwd (char *__path, size_t __len) __THROW __nonnull ((1));
@@ -49,6 +50,14 @@ static inline int _rmdir(const char *p){
 
 static inline char* _getcwd(char *p, size_t l){
 	return getcwd(p, l);
+}
+
+static inline void* LoadLibrary(const char *soname) {
+	return ::dlopen(soname, RTLD_NOW);
+}
+
+static inline void* GetProcAddress(void *h, const char *fn_name) {
+	return ::dlsym(h, fn_name);
 }
 
 #endif

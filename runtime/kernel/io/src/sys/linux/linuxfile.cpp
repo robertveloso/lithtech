@@ -26,6 +26,9 @@
 // 4 - display file open and close and read calls
 extern int32 g_CV_ShowFileAccess;
 
+CRezItm* g_pDeFileLastRezItm;
+uint32 g_nDeFileLastRezPos;
+
 // PlayDemo profile info.
 uint32 g_PD_FOpen=0;
 
@@ -46,11 +49,12 @@ public:
 		{
 			m_FileLen = 0;
 			m_SeekOffset = 0;
-			m_pFile = LTNULL;
-			m_pTree = LTNULL;
+			m_pFile = nullptr;
+			m_pTree = nullptr;
 			m_ErrorStatus = 0;
 			m_nNumReadCalls = 0;
 			m_nTotalBytesRead = 0;
+			m_pRezItm = nullptr;
 		}
 
 	virtual	~BaseFileStream()
@@ -84,13 +88,88 @@ public:
 		return LT_ERROR;
 	}
 
-	unsigned long	m_FileLen;		// Stored when the file is opened.
-	unsigned long	m_SeekOffset;	// Seek offset (used in rezfiles) (NOTE: in a rezmgr rez file this is the current position inside the resource).
-	FILE			*m_pFile;
-	struct FileTree_t	*m_pTree;
-	int				m_ErrorStatus;
-	unsigned long	m_nNumReadCalls;
-	unsigned long	m_nTotalBytesRead;
+	unsigned long       m_FileLen;		// Stored when the file is opened.
+	unsigned long       m_SeekOffset;	// Seek offset (used in rezfiles) (NOTE: in a rezmgr rez file this is the current position inside the resource).
+	FILE*               m_pFile;
+	struct FileTree_t*  m_pTree;
+	int                 m_ErrorStatus;
+	unsigned long       m_nNumReadCalls;
+	unsigned long       m_nTotalBytesRead;
+	CRezItm*            m_pRezItm;
+};
+
+
+class RezFileStream : public BaseFileStream
+{
+public:
+
+	RezFileStream() :
+	  m_SeekOffset(0)
+	{
+	}
+
+	void		Release();
+
+	LTRESULT	GetPos(uint32 *pos)
+	{
+		*pos = m_SeekOffset;
+		return LT_OK;
+	}
+
+	LTRESULT	SeekTo(uint32 offset)
+	{
+		if(m_pRezItm->Seek(offset))
+		{
+			m_SeekOffset = offset;
+			return LT_OK;
+		}
+		else
+		{
+			m_ErrorStatus = 1;
+			return LT_ERROR;
+		}
+	}
+
+	LTRESULT Read(void *pData, uint32 size)
+	{
+		size_t sizeRead;
+
+		if(size != 0)
+		{
+			if ((g_pDeFileLastRezItm == m_pRezItm) && (g_nDeFileLastRezPos == m_SeekOffset))
+			{
+				sizeRead = m_pRezItm->Read(pData, size);
+			}
+			else
+			{
+				sizeRead = m_pRezItm->Read(pData, size, m_SeekOffset);
+			}
+			
+			m_SeekOffset += (uint32)sizeRead;
+			g_pDeFileLastRezItm = m_pRezItm;
+			g_nDeFileLastRezPos = m_SeekOffset;
+			if(sizeRead != size)
+			{
+				memset(pData, 0, size);
+				m_ErrorStatus = 1;
+				return LT_ERROR;
+			}
+		}
+		return LT_OK;
+	}
+
+	bool IsRawFileInfoAvailable()
+	{
+		return false;
+	}
+
+	LTRESULT GetRawFileInfo(char* sFileName, uint32* nPos)
+	{
+		return 0;
+	}
+
+	uint32		m_SeekOffset;	// Seek offset (used in rezfiles) (NOTE: in a rezmgr rez file this is the current position inside the resource).
+
 };
 
 
@@ -159,11 +238,17 @@ public:
 };
 
 static ObjectBank<UnixFileStream> g_UnixFileStreamBank(8, 8);
+static ObjectBank<RezFileStream> g_RezFileStreamBank(8, 8);
 
 
 void UnixFileStream::Release()
 {
 	g_UnixFileStreamBank.Free(this);
+}
+
+void RezFileStream::Release()
+{
+	g_RezFileStreamBank.Free(this);
 }
 
 // LTFindInfo::m_pInternal..
@@ -201,7 +286,21 @@ int df_OpenTree(const char *pName, HLTFileTree *&pTreePointer)
 
 	allocSize = sizeof(FileTree) + strlen(pName);
 	pTree = (FileTree*)dalloc_z(allocSize);
-	pTree->m_TreeType = UnixTree;
+	if(S_ISDIR(info.st_mode)) {
+		pTree->m_TreeType = UnixTree;
+	} else if(S_ISREG(info.st_mode)) {
+		pTree->m_TreeType = RezFileTree;
+		LT_MEM_TRACK_ALLOC(pTree->m_pRezMgr = new CRezMgr(), LT_MEM_TYPE_FILE);
+		if (pTree->m_pRezMgr == LTNULL)
+			return -2;
+
+		if(!pTree->m_pRezMgr->Open(pName))
+		{
+			delete pTree->m_pRezMgr;
+			dfree(pTree);
+			return -2;
+		}
+	}
 
 	strcpy(pTree->m_BaseName, pName);
 	pTreePointer = (HLTFileTree*)pTree;
@@ -344,6 +443,24 @@ ILTStream* df_Open(HLTFileTree* hTree, const char *pName, int openMode)
 	if(!pTree)
 		return NULL;
 
+	if(pTree->m_TreeType == RezFileTree) {
+		CRezItm* pRezItm = pTree->m_pRezMgr->GetRezFromDosPath(pName);
+		if (pRezItm == LTNULL) return LTNULL;
+			// Use fp to setup the stream.
+		RezFileStream *pRezStream = g_RezFileStreamBank.Allocate();
+		pRezStream->m_pRezItm = pRezItm;
+		pRezStream->m_pTree = pTree;
+		pRezStream->m_FileLen = pRezItm->GetSize();
+		pRezStream->m_SeekOffset = 0;
+
+		if (g_CV_ShowFileAccess >= 1)
+		{
+			dsi_ConsolePrint("stream %p open rez %s size = %u",pRezStream,pName,pRezItm->GetSize());
+		}
+
+		return pRezStream;
+	}
+
 	if(pTree->m_TreeType != UnixTree) {
 		return NULL;
 	}
@@ -374,9 +491,109 @@ ILTStream* df_Open(HLTFileTree* hTree, const char *pName, int openMode)
 	return pUnixStream;
 }
 
+struct UnixTreeSearch
+{
+	char searchPath[MAX_PATH];
+	DIR* m_pDir;
+	UnixTreeSearch(const char* bName, const char *dName)
+	{
+		memset(searchPath, 0, sizeof(searchPath));
+		LTSNPrintF(searchPath, sizeof(searchPath)-1, "%s/%s", bName, dName);
+		m_pDir = opendir(searchPath);
+	};
+
+	bool GetNextFile(LTFindInfo *pInfo) 
+	{
+		errno = 0;
+		bool found = false;
+		dirent64 *pEntry = readdir64(this->m_pDir);
+		while(pEntry != nullptr) {
+			if (pEntry->d_type == DT_DIR)
+				if (pEntry->d_name[0] == '.') { // skip hidden files, '.' and '..' directories
+					pEntry = readdir64(this->m_pDir);
+					continue;
+				}
+
+			if (pEntry->d_type & (DT_REG|DT_DIR|DT_LNK)) 
+			{
+				found = true;
+				break;
+			}
+			pEntry = readdir64(this->m_pDir);
+		}
+        if(found) 
+			fillFileInfo(pEntry, pInfo);
+		return found;
+	};
+	
+	void fillFileInfo(dirent64 *pEntry, LTFindInfo *pInfo)
+	{
+		char filePath[MAX_PATH];
+		struct stat64 st;
+		strncpy(pInfo->m_Name, pEntry->d_name, sizeof(pInfo->m_Name)-1);
+		pInfo->m_Type = (pEntry->d_type == DT_DIR) ? DIRECTORY_TYPE : FILE_TYPE;
+		memset(filePath, 0, sizeof(filePath));
+		LTSNPrintF(filePath, sizeof(filePath)-1, "%s/%s", searchPath, pEntry->d_name);
+		stat64(filePath, &st);
+		pInfo->m_Size = st.st_size;
+		pInfo->m_Date = st.st_ctim.tv_sec;
+	};
+
+	~UnixTreeSearch()
+	{
+		closedir(m_pDir);
+	};
+};
+
+
+static void cleanUnixTreeSearch(LTFindInfo *pInfo)
+{
+	UnixTreeSearch *search = reinterpret_cast<UnixTreeSearch*>(pInfo->m_pInternal);
+	if(search != nullptr) 
+		delete search;
+	
+	pInfo->m_pInternal = nullptr;
+}
+
+static bool findNextUnixTree(const char *pBaseDir, const char *pDirName, LTFindInfo *pInfo)
+{
+	UnixTreeSearch *search = reinterpret_cast<UnixTreeSearch*>(pInfo->m_pInternal);
+	if(search == nullptr) {
+		search = new UnixTreeSearch(pBaseDir, pDirName);
+		pInfo->m_pInternal = search;
+	}
+	return search->GetNextFile(pInfo);
+}
+
+
+static bool findNextRezMgr(CRezMgr *pRez, const char *pDirName, LTFindInfo *pInfo)
+{
+	return false;
+}
+
 
 int df_FindNext(HLTFileTree* hTree, const char *pDirName, LTFindInfo *pInfo)
 {
+	if(!hTree)
+		return 0;
+	
+	FileTree *pTree = reinterpret_cast<FileTree*>(hTree);
+	if(pTree->m_TreeType == UnixTree)
+	{
+		if(findNextUnixTree(pTree->m_BaseName, pDirName, pInfo))
+			return 1;
+		else {
+			cleanUnixTreeSearch(pInfo);
+			return 0;
+		}
+	}
+	if(pTree->m_TreeType == RezFileTree)
+	{
+		if(findNextRezMgr(pTree->m_pRezMgr, pDirName, pInfo))
+			return 1;
+		else
+			return 0;
+	}
 	return 0;
 }
 

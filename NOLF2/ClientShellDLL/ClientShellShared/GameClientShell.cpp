@@ -360,6 +360,14 @@ void ChaseToggleFn(int argc, const char **argv)
 	}
 }
 
+static size_t CommandLineLength(int count, const char **args)
+{
+	size_t len = strlen(args[0]);
+	for (int i=1; i<count; ++i)
+		len += strlen(args[i]) + 3;
+	return len;
+}
+
 void CmdFn(int argc, const char **argv)
 {
 	if (argc < 2)
@@ -369,8 +377,7 @@ void CmdFn(int argc, const char **argv)
 	}
 
 	// Send message to server...
-	char buf[256];
-	buf[0] = '\0';
+	char *buf = new char(CommandLineLength(argc,argv)+3);
 	sprintf(buf, "%s", argv[0]);
 	for (int i=1; i < argc; i++)
 	{
@@ -381,7 +388,7 @@ void CmdFn(int argc, const char **argv)
 	}
 
     HSTRING hstrCmd = g_pLTClient->CreateString(buf);
-
+	delete buf;
 	CAutoMessage cMsg;
 	cMsg.Writeuint8(MID_CONSOLE_COMMAND);
 	cMsg.WriteHString(hstrCmd);
@@ -424,7 +431,7 @@ void ListFn(int argc, const char **argv)
 	// Send message to server...
 
 	char buf[100];
-	sprintf(buf, "List %s", argv[0]);
+	snprintf(buf, sizeof(buf), "List %s", argv[0]);
 
     HSTRING hstrMsg = g_pLTClient->CreateString(buf);
 
@@ -849,7 +856,7 @@ void CGameClientShell::CSPrint(const char* msg, ...)
 	char pMsg[256];
 	va_list marker;
 	va_start (marker, msg);
-	int nSuccess = vsprintf (pMsg, msg, marker);
+	int nSuccess = vsnprintf (pMsg, sizeof(pMsg), msg, marker);
 	va_end (marker);
 
 	if (nSuccess < 0) return;
@@ -966,7 +973,7 @@ uint32 CGameClientShell::OnEngineInitialized(RMode *pMode, LTGUID *pAppGuid)
 	nNumRuns++;
 
 	char strConsole[64];
-	sprintf (strConsole, "+NumRuns %f", nNumRuns);
+	snprintf (strConsole, sizeof(strConsole), "+NumRuns %f", nNumRuns);
     g_pLTClient->RunConsoleString(strConsole);
 
     bool bNetworkGameStarted = false;
@@ -1041,7 +1048,8 @@ uint32 CGameClientShell::OnEngineInitialized(RMode *pMode, LTGUID *pAppGuid)
 	}
 
 	// Init the ClientFX Database
-	if(!CClientFXDB::GetSingleton().Init(g_pLTClient))
+	CClientFXDB &fxdb = CClientFXDB::GetSingleton();
+	if(!fxdb.Init(g_pLTClient))
 	{
 		g_pLTClient->ShutdownWithMessage( "Could not init ClientFXDB!" );
 		return LT_ERROR;
@@ -4668,6 +4676,13 @@ BOOL HookWindow()
 		TRACE("HookWindow - ERROR - could not set the window procedure!\n");
 		return FALSE;
 	}
+#else
+    if(g_pLTClient->GetEngineHook("SDL_Window",(void **)&g_hMainWnd) != LT_OK)
+	{
+		TRACE("HookWindow - ERROR - could not get the engine window!\n");
+		return FALSE;
+	}
+
 #endif
 	return TRUE;
 }
@@ -5008,12 +5023,13 @@ void CGameClientShell::SendClientLoadedMessage( )
 //	PURPOSE:	Launches the serverapp.
 //
 // --------------------------------------------------------------------------- //
+#ifdef __LINUX
 typedef int PROCESS_INFORMATION;
 struct STARTUPINFO
 {
 	int cb;
 };
-
+#endif
 bool CGameClientShell::LauncherServerApp( char const* pszProfileFile )
 {
 	PROCESS_INFORMATION procInfo;
@@ -5039,7 +5055,9 @@ bool CGameClientShell::LauncherServerApp( char const* pszProfileFile )
 	sCmdLine += "\"";
 	sCmdLine += pszProfileFile;
 	sCmdLine += "\"";
+#ifdef __LINUX
 #define CreateProcess(...) true
+#endif
 	// Start the server app.
 	if( !CreateProcess( "NOLF2Srv.exe", ( char * )sCmdLine.c_str( ), NULL, NULL, FALSE, 0, NULL, NULL, 
 		&startInfo, &procInfo ))

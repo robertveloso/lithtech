@@ -33,6 +33,10 @@ define_holder(IClientFileMgr, client_file_mgr);
 static IClientShell *i_client_shell;
 define_holder(IClientShell, i_client_shell);
 
+//IInstanceHandleClient
+static IInstanceHandleClient *instance_handle_client;
+define_holder(IInstanceHandleClient, instance_handle_client);
+
 
 void dsi_OnReturnError(int err)
 {
@@ -206,17 +210,24 @@ void dsi_RelinquishRenderModes(RMode *pMode)
 
 LTRESULT dsi_GetRenderMode(RMode *pMode)
 {
-return LTTRUE;      // DAN - temporary
+    pMode->m_BitDepth = 32;
+    pMode->m_Width = g_ScreenWidth;
+    pMode->m_Height = g_ScreenHeight;
+    pMode->m_Description[0] = 0;
+    pMode->m_InternalName[0] = 0;
+    pMode->m_bHWTnL = false;
+    pMode->m_pNext = nullptr;
+    return LTTRUE;      // DAN - temporary
 }
 
 LTRESULT dsi_SetRenderMode(RMode *pMode, const char *pName)
 {
-return LTTRUE;      // DAN - temporary
+return LT_OK;      // DAN - temporary
 }
 
 LTRESULT dsi_ShutdownRender(uint32 flags)
 {
-return LTTRUE;      // DAN - temporary
+return LT_OK;      // DAN - temporary
 }
 
 LTRESULT _GetOrCopyClientFile(char *pTempPath, const char *pFilename, char *pOutName, int outNameLen)
@@ -265,13 +276,13 @@ LTRESULT dsi_InitClientShellDE()
     if (status == BIND_CANTFINDMODULE) {
         g_pClientMgr->SetupError(LT_MISSINGSHELLDLL, clientlib);
         RETURN_ERROR(1, InitClientShellDE, LT_MISSINGSHELLDLL);
-        dResult = !LTTRUE;
     }
 
 	// have the user's cshell and the clientMgr exchange info
 	if (i_client_shell == nullptr )
     {
-		CRITICAL_ERROR("dsys_interface", "Can't create CShell\n");
+        g_pClientMgr->SetupError(LT_INVALIDSHELLDLL, clientlib);
+        RETURN_ERROR_PARAM(1, InitClientShellDE, LT_INVALIDSHELLDLL, clientlib);
 	}
 
     copied = false;
@@ -290,11 +301,10 @@ LTRESULT dsi_InitClientShellDE()
     if (status == BIND_CANTFINDMODULE) {
         //unload the loaded cshell 
         bm_UnbindModule(g_pClientMgr->m_hShellModule);
-        g_pClientMgr->m_hShellModule = LTNULL;
+        g_pClientMgr->m_hShellModule = nullptr;
 
         g_pClientMgr->SetupError(LT_INVALIDSHELLDLL, reslib);
         RETURN_ERROR_PARAM(1, InitClientShellDE, LT_INVALIDSHELLDLL, reslib);
-        dResult = !LTTRUE;
     }
     
     
@@ -322,7 +332,11 @@ LTRESULT dsi_InitClientShellDE()
         dResult = !LTTRUE;
     }
 
-	return dResult;
+    if (instance_handle_client != nullptr) {
+        instance_handle_client->SetInstanceHandle(g_pClientMgr->m_hShellModule);
+    }
+
+	return LT_OK;
 }
 
 void dsi_OnMemoryFailure()

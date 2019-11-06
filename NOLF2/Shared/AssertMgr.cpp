@@ -52,7 +52,7 @@ MessageBox(SDL_Window *win, std::string message, std::string title, uint32 flags
 		win,
 		title.c_str(),
 		message.c_str(),
-		SDL_arraysize(btns.data()),
+		static_cast<int>(btns.size()*sizeof(SDL_MessageBoxButtonData)),
 		btns.data(),
 		&colors
 	};
@@ -89,6 +89,9 @@ void CAssertMgr::Disable()
 
 int CAssertMgr::CreateMessageBox(SDL_Window *win, const char *szMsg)
 {
+#ifdef __LINUX
+	return MessageBox(win, szMsg, "Assert", MB_ASSERT);
+#else
 	const SDL_MessageBoxButtonData btns[] = {
 		{0,IDABORT,"Abort"},
 		{0,IDRETRY,"Retry"},
@@ -122,10 +125,10 @@ int CAssertMgr::CreateMessageBox(SDL_Window *win, const char *szMsg)
 	int button=15;
 	SDL_ShowMessageBox(&mbox_data, &button);
 	return button;
-
+#endif
 }
 
-int CAssertMgr::ReportHook(int nReportType, const char* szMessage, int* pnReturnValue)
+int CAssertMgr::ReportHook(int nReportType, char* szMessage, int* pnReturnValue)
 {
     if ( LTFALSE == m_bEnabled )
 	{
@@ -163,7 +166,7 @@ An assert has occurred:\n\n%s\n\
 Retry will step into the debugger. You should\n\
 only select this option if you are currently\n\
 running the game under a debugger.\n", szMessage);
-
+#ifdef _CLIENTBUILD
 		SDL_Window *win = nullptr;
 		g_pLTClient->GetEngineHook("hwnd", (void**)&win);
 
@@ -183,7 +186,7 @@ running the game under a debugger.\n", szMessage);
 				SDL_MaximizeWindow(win);
 			*pnReturnValue = 0;
 		}
-
+#endif
 		return TRUE;
 	}
 	else if ( szAssert && !stricmp(szAssert, "window") )
@@ -196,7 +199,7 @@ An assert has occurred:\n\n%s\n\
 Retry will step into the debugger. You should\n\
 only select this option if you are currently\n\
 running the game under a debugger.\n", szMessage);
-
+#ifdef _CLIENTBUILD
 		SDL_Window *win = nullptr;
 		g_pLTClient->GetEngineHook("hwnd", (void**)&win);
 
@@ -214,7 +217,7 @@ running the game under a debugger.\n", szMessage);
 		{
 			*pnReturnValue = 0;
 		}
-
+#endif
 		return TRUE;
 	}
 	else if ( szAssert && !stricmp(szAssert, "null") )
