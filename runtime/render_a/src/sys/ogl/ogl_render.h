@@ -6,9 +6,13 @@
 
 extern void rdll_OGlRenderSetup(RenderStruct *pStruct);
 
+class OGlRenderWorld;
+
 class OGlRenderStruct : public SysRender
 {
     SDL_GLContext hContext;
+
+    OGlRenderWorld *m_pRenderWorld;
 public:
     OGlRenderStruct();
     bool            LoadWorldData(ILTStream *pStream);
