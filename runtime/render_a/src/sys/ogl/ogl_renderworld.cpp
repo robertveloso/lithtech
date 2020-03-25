@@ -2,5 +2,5 @@
 
 bool OGlRenderWorld::Load(ILTStream *apStream)
 {
-	return false;
+    return false; // STUB we currently want to fail loading data;
 };
