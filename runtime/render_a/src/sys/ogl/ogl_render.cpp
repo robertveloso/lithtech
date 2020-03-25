@@ -1,5 +1,6 @@
 #include "bdefs.h"
 #include "ogl_render.h"
+#include "ogl_renderworld.h"
 #include "de_objects.h"
 #include <GL/gl.h>
 #include <GL/glx.h>
@@ -17,7 +18,11 @@ OGlRenderStruct::OGlRenderStruct()
 
 bool OGlRenderStruct::LoadWorldData(ILTStream *pStream)
 {
-    return false; // STUB we currently want to fail loading data;
+    if(m_pRenderWorld)
+        delete m_pRenderWorld;
+
+    LT_MEM_TRACK_ALLOC(m_pRenderWorld = new OGlRenderWorld, LT_MEM_TYPE_RENDERER);
+    return m_pRenderWorld->Load(pStream);
 }
 
 HRENDERCONTEXT OGlRenderStruct::CreateContext()
